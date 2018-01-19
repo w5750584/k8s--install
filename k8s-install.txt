@@ -1,0 +1,451 @@
+#环境
+# 192.168.61.128 master
+#192.168.61.129 node1
+# 192.168.61.128 etcd1
+#192.168.61.129 etcd1
+#添加相关host到/etc/hosts下
+#禁用selinux
+vim /etc/selinux/config
+setenforce 0
+#下载cfssl相关二进制包（用来生成证书）
+mkdir –p /opt/k8s/
+cd /opt/k8s/
+wget https://pkg.cfssl.org/R1.2/cfssl_linux-amd64
+chmod +x cfssl_linux-amd64
+mv cfssl_linux-amd64 /usr/local/bin/cfssl
+wget https://pkg.cfssl.org/R1.2/cfssljson_linux-amd64
+chmod +x cfssljson_linux-amd64
+mv cfssljson_linux-amd64 /usr/local/bin/cfssljson
+wget https://pkg.cfssl.org/R1.2/cfssl-certinfo_linux-amd64
+chmod +x cfssl-certinfo_linux-amd64
+mv cfssl-certinfo_linux-amd64 /usr/local/bin/cfssl-certinfo
+export PATH=/usr/local/bin:$PATH
+
+#生成证书
+vim admin-csr.json
+{
+  "CN": "admin",
+  "hosts": [],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "ST": "Shenzhen",
+      "L": "Shenzhen",
+      "O": "system:masters",
+      "OU": "System"
+    }
+  ]
+}
+vim k8s-gencert.json
+{
+  "signing": {
+    "default": {
+      "expiry": "87600h"
+    },
+    "profiles": {
+      "kubernetes": {
+        "usages": [
+            "signing",
+            "key encipherment",
+            "server auth",
+            "client auth"
+        ],
+        "expiry": "87600h"
+      }
+    }
+  }
+}
+vim k8s-root-ca-csr.json
+{
+    "CN": "kubernetes",
+    "hosts": [
+    "127.0.0.1",
+    "192.168.61.128",
+    "192.168.61.129",
+    "172.21.0.1",
+    "kubernetes",
+    "kubernetes.default",
+    "kubernetes.default.svc",
+    "kubernetes.default.svc.cluster",
+    "kubernetes.default.svc.cluster.local"
+     ],
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
+    "names": [
+        {
+            "C": "CN",
+            "ST": "Shenzhen",
+            "L": "Shenzhen",
+            "O": "k8s",
+            "OU": "System"
+        }
+    ]
+}
+vim kube-proxy-csr.json
+{
+  "CN": "system:kube-proxy",
+  "hosts": [],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "ST": "Shenzhen",
+      "L": "Shenzhen",
+      "O": "k8s",
+      "OU": "System"
+    }
+  ]
+}
+vim kubernetes-csr.json
+{
+    "CN": "kubernetes",
+    "hosts": [
+    "127.0.0.1",
+    "192.168.61.128",
+    "192.168.61.129",
+    "172.21.0.1",
+    "kubernetes",
+    "kubernetes.default",
+    "kubernetes.default.svc",
+    "kubernetes.default.svc.cluster",
+    "kubernetes.default.svc.cluster.local"
+     ],
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
+    "names": [
+        {
+            "C": "CN",
+            "ST": "Shenzhen",
+            "L": "Shenzhen",
+            "O": "k8s",
+            "OU": "System"
+        }
+    ]
+}
+cfssl gencert --initca=true k8s-root-ca-csr.json | cfssljson --bare k8s-root-ca
+for targetName in kubernetes admin kube-proxy; do     cfssl gencert --ca k8s-root-ca.pem --ca-key k8s-root-ca-key.pem --config k8s-gencert.json --profile kubernetes $targetName-csr.json | cfssljson --bare $targetName; done
+
+export KUBE_APISERVER="https://192.168.61.128:6443
+export BOOTSTRAP_TOKEN=$(head -c 16 /dev/urandom | od -An -t x | tr -d ' ')
+echo "Tokne: ${BOOTSTRAP_TOKEN}"
+
+cat > token.csv <<EOF
+${BOOTSTRAP_TOKEN},kubelet-bootstrap,10001,"system:kubelet-bootstrap"
+EOF
+
+
+
+#下载etcd,flannel,kubernetes;解压到/opt/
+wget https://github.com/coreos/etcd/releases/download/v3.2.14/etcd-v3.2.14-linux-amd64.tar.gz
+wget flannel-v0.9.0-linux-amd64.tar.gz 去官网下载
+wget https://storage.googleapis.com/kubernetes-release/release/v1.9.1/kubernetes.tar.gz
+#准备相关目录
+mkdir -p /opt/server/bin/{node,master,etcd}
+cp /opt/kubernetes/server/bin/kubelet /opt/server/bin/node/
+cp /opt/kubernetes/cluster/centos/node/bin/mk-docker-opts.sh /opt/server/bin/node/
+cp -r /opt/flanneld /opt/server/bin/node/
+cp -r /opt/kubernetes/server/bin/kube-* /opt/server/bin/master/
+cp -r /opt/kubernetes/server/bin/kubelet /opt/server/bin/master/
+cp -r /opt/kubernetes/server/bin/kubectl /opt/server/bin/master/
+cp -r /opt/etcd-v3.2.11-linux-amd64/etcd* /opt/server/bin/etcd/
+cp -r /opt/etcd/etcd* /opt/server/bin/etcd/
+#同步二进制文件到master、node
+for node in master node1 ;do rsync -avzP /opt/server/bin/node/ ${node}:/usr/local/bin/; done
+for master in master;do rsync -avzP /opt/server/bin/master/ ${master}:/usr/local/bin/; done
+for etcd in master node1;do rsync -avzP /opt/server/bin/etcd/ ${etcd}:/usr/local/bin/; done
+#创建systemd服务启动文件
+mkdir -p /opt/server/bin/{node-service,master-service,etcd-service,docker-service,ssl}
+#相关内容
+cd /opt/server/bin/
+vim node-service/docker.service
+
+[Unit]
+Description=Docker Application Container Engine
+Documentation=http://docs.docker.io
+
+[Service]
+Environment="PATH=/usr/local/bin:/bin:/sbin:/usr/bin:/usr/sbin"
+EnvironmentFile=-/run/flannel/docker
+ExecStart=/usr/bin/dockerd --log-level=error $DOCKER_NETWORK_OPTIONS \
+--exec-opt native.cgroupdriver=systemd
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=infinity
+LimitNPROC=infinity
+LimitCORE=infinity
+Delegate=yes
+KillMode=process
+[Install]
+WantedBy=multi-user.target
+
+vim node-service/kubelet.service
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+After=docker.service
+Requires=docker.service
+[Service]
+WorkingDirectory=/var/lib/kubelet
+ExecStart=/usr/local/bin/kubelet \
+–address=192.168.61.129 \
+–hostname-override=192.168.61.129 \
+–pod-infra-container-image=registry.access.redhat.com/rhel7/pod-infrastructure:latest \
+–experimental-bootstrap-kubeconfig=/etc/kubernetes/ssl/bootstrap.kubeconfig \
+–kubeconfig=/etc/kubernetes/ssl/kubeconfig \
+–cert-dir=/etc/kubernetes/ssl \
+–hairpin-mode promiscuous-bridge \
+–allow-privileged=true \
+–serialize-image-pulls=false \
+–logtostderr=true \
+–cgroup-driver=systemd \
+–cluster_dns=172.21.0.2 \
+–cluster_domain=cluster.local \
+–v=2
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+
+vim node-service/flanneld.service
+
+[Unit]
+Description=Flanneld overlay address etcd agent
+After=network.target
+After=network-online.target
+Wants=network-online.target
+After=etcd.service
+Before=docker.service
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/flanneld \
+-etcd-cafile=/etc/kubernetes/ssl/k8s-root-ca.pem \
+-etcd-certfile=/etc/kubernetes/ssl/kubernetes.pem \
+-etcd-keyfile=/etc/kubernetes/ssl/kubernetes-key.pem \
+-etcd-endpoints=https://192.168.61.128:2379,https://192.168.61.129:2379 \
+-etcd-prefix=/kubernetes/network \
+-iface=eno16777736
+ExecStartPost=/usr/local/bin/mk-docker-opts.sh -k DOCKER_NETWORK_OPTIONS -d /run/flannel/docker
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
+RequiredBy=docker.service
+
+vim master-service/kube-apiserver.service
+
+[Unit]
+Description=Kubernetes API Server
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+After=network.target
+[Service]
+ExecStart=/usr/local/bin/kube-apiserver \
+--admission-control=NamespaceLifecycle,LimitRanger,ServiceAccount,DefaultStorageClass,ResourceQuota,NodeRestriction \
+--advertise-address=192.168.61.128 \
+--bind-address=192.168.61.128 \
+--insecure-bind-address=127.0.0.1 \
+--kubelet-https=true \
+--runtime-config=rbac.authorization.k8s.io/v1beta1 \
+--authorization-mode=Node,RBAC \
+--anonymous-auth=false \
+--basic-auth-file=/etc/kubernetes/basic_auth_file \
+--enable-bootstrap-token-auth \
+--token-auth-file=/etc/kubernetes/ssl/token.csv \
+--service-cluster-ip-range=172.21.0.0/16 \
+--service-node-port-range=300-60000 \
+--tls-cert-file=/etc/kubernetes/ssl/kubernetes.pem \
+--tls-private-key-file=/etc/kubernetes/ssl/kubernetes-key.pem \
+--client-ca-file=/etc/kubernetes/ssl/k8s-root-ca.pem \
+--service-account-key-file=/etc/kubernetes/ssl/k8s-root-ca-key.pem \
+--etcd-cafile=/etc/kubernetes/ssl/k8s-root-ca.pem \
+--etcd-certfile=/etc/kubernetes/ssl/kubernetes.pem \
+--etcd-keyfile=/etc/kubernetes/ssl/kubernetes-key.pem \
+--etcd-servers=https://192.168.61.128:2379,https://192.168.61.129:2379 \
+--enable-swagger-ui=true \
+--allow-privileged=true \
+--apiserver-count=3 \
+--audit-log-maxage=30 \
+--audit-log-maxbackup=3 \
+--audit-log-maxsize=100 \
+--audit-log-path=/var/lib/audit.log \
+--event-ttl=1h \
+--v=2
+Restart=on-failure
+RestartSec=5
+Type=notify
+LimitNOFILE=65536
+[Install]
+WantedBy=multi-user.target
+
+vim master-service/kube-controller-manager.service
+
+[Unit]
+Description=Kubernetes Controller Manager
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+[Service]
+ExecStart=/usr/local/bin/kube-controller-manager \
+--address=127.0.0.1 \
+--master=http://127.0.0.1:8080 \
+--allocate-node-cidrs=true \
+--service-cluster-ip-range=172.21.0.0/16 \
+--cluster-cidr=172.20.0.0/16 \
+--cluster-name=kubernetes \
+--cluster-signing-cert-file=/etc/kubernetes/ssl/k8s-root-ca.pem \
+--cluster-signing-key-file=/etc/kubernetes/ssl/k8s-root-ca-key.pem \
+--service-account-private-key-file=/etc/kubernetes/ssl/k8s-root-ca-key.pem \
+--root-ca-file=/etc/kubernetes/ssl/k8s-root-ca.pem \
+--leader-elect=true \
+--v=2
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+
+
+vim master-service/kube-scheduler.service
+
+[Unit]
+Description=Kubernetes Scheduler
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+[Service]
+ExecStart=/usr/local/bin/kube-scheduler \
+--address=127.0.0.1 \
+--master=http://127.0.0.1:8080 \
+--leader-elect=true \
+--v=2
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+
+vim etcd-service/etcd.service
+
+[Unit]
+Description=Etcd Server
+After=network.target
+After=network-online.target
+Wants=network-online.target
+Documentation=https://github.com/coreos
+[Service]
+Type=notify
+WorkingDirectory=/var/lib/etcd/
+#EnvironmentFile=-/etc/etcd/etcd.conf
+ExecStart=/usr/local/bin/etcd \
+--name=etcd1 \
+--cert-file=/etc/kubernetes/ssl/kubernetes.pem \
+--key-file=/etc/kubernetes/ssl/kubernetes-key.pem \
+--peer-cert-file=/etc/kubernetes/ssl/kubernetes.pem \
+--peer-key-file=/etc/kubernetes/ssl/kubernetes-key.pem \
+--trusted-ca-file=/etc/kubernetes/ssl/k8s-root-ca.pem \
+--peer-trusted-ca-file=/etc/kubernetes/ssl/k8s-root-ca.pem \
+--initial-advertise-peer-urls=https://192.168.61.128:2380 \
+--listen-peer-urls=https://192.168.61.128:2380 \
+--listen-client-urls=https://192.168.61.128:2379,http://127.0.0.1:2379 \
+--advertise-client-urls=https://192.168.61.128:2379 \
+--initial-cluster-token=etcd-cluster-0 \
+--initial-cluster=etcd1=https://192.168.61.128:2380,etcd2=https://192.168.61.129:2380\
+--initial-cluster-state=new \
+--data-dir=/var/lib/etcd
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+[Install]
+WantedBy=multi-user.target
+
+#同步相关systemd文件到master 和node节点
+for node in {master,node1};do rsync -avzP /opt/server/bin/node-service/ ${node}:/lib/systemd/system/; done
+for master in {master};do rsync -avzP /opt/server/bin/master-service/ ${master}:/lib/systemd/system/; done
+for etcd in {etcd1,etcd2};do rsync -avzP /opt/server/bin/etcd-service/ ${etcd}:/lib/systemd/system/; done
+
+
+kubectl config set-cluster kubernetes   --certificate-authority=k8s-root-ca.pem   --embed-certs=true   --server=${
+KUBE_APISERVER}   --kubeconfig=bootstrap.kubeconfig
+kubectl config set-credentials kubelet-bootstrap   --token=${BOOTSTRAP_TOKEN}   --kubeconfig=bootstrap.kubeconfig
+kubectl config set-context default   --cluster=kubernetes   --user=kubelet-bootstrap   --kubeconfig=bootstrap.kube
+config
+kubectl config set-cluster kubernetes   --certificate-authority=k8s-root-ca.pem   --embed-certs=true   --server=${
+KUBE_APISERVER}   --kubeconfig=kube-proxy.kubeconfig
+
+kubectl config set-credentials kube-proxy   --client-certificate=kube-proxy.pem   --client-key=kube-proxy-key.pem 
+  --embed-certs=true   --kubeconfig=kube-proxy.kubeconfig
+kubectl config set-context default   --cluster=kubernetes   --user=kube-proxy   --kubeconfig=kube-proxy.kubeconfig
+
+kubectl config use-context default --kubeconfig=kube-proxy.kubeconfig
+
+cat >> audit-policy.yaml <<EOFapiVersion: audit.k8s.io/v1beta1
+kind: Policy
+rules:
+- level: Metadata
+EOF
+kubectl config set-cluster kubernetes     --certificate-authority=k8s-root-ca.pem --embed-certs=true --server=${KUBE_APISERVER} --kubeconfig=./kubeconfig
+kubectl config set-credentials kubernetes-admin --client-certificate=admin.pem --client-key=admin-key.pem --embed-certs=true --kubeconfig=./kubeconfig
+kubectl config set-context kubernetes-admin@kubernetes --cluster=kubernetes --user=kubernetes-admin  --kubeconfig=./kubeconfig
+kubectl config use-context kubernetes-admin@kubernetes --kubeconfig=./kubeconfig
+
+#同步ssl
+for node in {master,node1};do ssh ${node} "mkdir -p /etc/kubernetes/ssl/ "; done
+for ssl in {master,node1};do rsync -avzP /root/kubernetes/server/bin/ssl/ ${ssl}:/etc/kubernetes/ssl/; done
+mkdir -p /root/.kube ; \cp -f /etc/kubernetes/ssl/kubeconfig /root/.kube/config
+
+for node in {etcd1,etcd2};do ssh ${node} "systemctl daemon-reload && systemctl start etcd && systemctl enable etcd
+"; done
+
+#测试etcd 是否正常
+etcdctl --ca-file=/etc/kubernetes/ssl/k8s-root-ca.pem --cert-file=/etc/kubernetes/ssl/kubernetes.pem --key-file=/e
+tc/kubernetes/ssl/kubernetes-key.pem cluster-health
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#以下内容在node上操作
+yum install *rhsm* -y
+yum install -y conntrack-tools
+yum install docker 
+vim /etc/yum.repos.d/virt7-docker-common-release.rep
+[virt7-docker-common-release]
+name=virt7-docker-common-release
+baseurl=http://cbs.centos.org/repos/virt7-docker-common-release/x86_64/os/
+gpgcheck=0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#

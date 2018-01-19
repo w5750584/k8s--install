@@ -1,0 +1,1 @@
+KUBE_PROXY_ARGS="--bind-address=192.168.61.129 --hostname-override=192.168.61.129 --kubeconfig=/etc/kubernetes/ssl/kube-proxy.kubeconfig --cluster-cidr=172.20.0.0/16"
