@@ -1,0 +1,22 @@
+Version: v1  
+kind: ReplicationController  
+#apiVersion: extensions/v1beta1
+#kind: Deployment
+metadata:  
+   name: tbl-controller
+   labels:   
+     name: tbl-controller
+spec:  
+  replicas: 1 
+  selector:  
+     name: tbl-pod
+  template:   
+    metadata:  
+     labels:  
+       name: tbl-pod
+    spec:  
+      containers:  
+      - name: tbl-test 
+        image: docker.io/xiaofengdi/tomcat8
+        ports:  
+        - containerPort: 8080
