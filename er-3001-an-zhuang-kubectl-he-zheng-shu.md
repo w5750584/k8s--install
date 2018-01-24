@@ -38,7 +38,125 @@ mv cfssl-certinfo_linux-amd64 /usr/local/bin/cfssl-certinfo
 mkdir -p /opt/k8s-install/ssl/
 cd /opt/k8s-install/ssl
 
+cat admin-csr.json
+{
+  "CN": "admin",
+  "hosts": [],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "ST": "Shenzhen",
+      "L": "Shenzhen",
+      "O": "system:masters",
+      "OU": "System"
+    }
+  ]
+}
+
+cat k8s-gencert.json
+{
+  "signing": {
+    "default": {
+      "expiry": "87600h"
+    },
+    "profiles": {
+      "kubernetes": {
+        "usages": [
+            "signing",
+            "key encipherment",
+            "server auth",
+            "client auth"
+        ],
+        "expiry": "87600h"
+      }
+    }
+  }
+}
+
+cat k8s-root-ca-csr.json
+{
+    "CN": "kubernetes",
+    "hosts": [
+    "127.0.0.1",
+    "192.168.61.128",
+    "192.168.61.129",
+    "172.21.0.1",
+    "kubernetes",
+    "kubernetes.default",
+    "kubernetes.default.svc",
+    "kubernetes.default.svc.cluster",
+    "kubernetes.default.svc.cluster.local"
+     ],
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
+    "names": [
+        {
+            "C": "CN",
+            "ST": "Shenzhen",
+            "L": "Shenzhen",
+            "O": "k8s",
+            "OU": "System"
+        }
+    ]
+}
+
+cat kube-proxy-csr.json
+{
+  "CN": "system:kube-proxy",
+  "hosts": [],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "ST": "Shenzhen",
+      "L": "Shenzhen",
+      "O": "k8s",
+      "OU": "System"
+    }
+  ]
+}
+
+cat kubernetes-csr.json
+{
+    "CN": "kubernetes",
+    "hosts": [
+    "127.0.0.1",
+    "192.168.61.128",
+    "192.168.61.129",
+    "172.21.0.1",
+    "kubernetes",
+    "kubernetes.default",
+    "kubernetes.default.svc",
+    "kubernetes.default.svc.cluster",
+    "kubernetes.default.svc.cluster.local"
+     ],
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
+    "names": [
+        {
+            "C": "CN",
+            "ST": "Shenzhen",
+            "L": "Shenzhen",
+            "O": "k8s",
+            "OU": "System"
+        }
+    ]
+}
+
+#所有文件我已经上传到github上了
+https://github.com/w5750584/k8s--install/tree/master/json%E8%AF%81%E4%B9%A6%E6%96%87%E4%BB%B6
 ```
 
-[json证书文件](json证书文件)
+
 
