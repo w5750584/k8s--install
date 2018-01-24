@@ -1,4 +1,4 @@
-####  1、服务器要求：
+#### 1、服务器要求：
 
 \*  系统版本：centos7.4
 
@@ -23,18 +23,27 @@ flanneld
 ##### \*  master：
 
 ```
-    kubectl
-    kube-apiserver
-    kube-scheduler
-    kube-controller-manager
+kubectl
+kube-apiserver
+kube-scheduler
+kube-controller-manager
 ```
 
 ##### \*  node：
 
 ```
-    docker
-    kubelet
-    kub-proxy
+docker
+kubelet
+kub-proxy
+```
+
+#### 3、在集群所有服务器/etc/hosts添加一下内容：
+
+```
+master 192.168.61.128
+node1 192.168.61.129
+etcd1 192.168.1.128
+etcd2 192.168.1.129
 ```
 
 
